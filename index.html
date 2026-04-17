@@ -1,1 +1,516 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sweets Drop Game (Compact)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <style>
+        body {
+            background-color: #fdf2f8; /* 薄いピンクの可愛い背景 */
+            touch-action: none; /* スマホでのスクロール防止 */
+            font-family: 'Rounded Mplus 1c', 'Hiragino Maru Gothic ProN', 'Comic Sans MS', sans-serif;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        #game-container {
+            position: relative;
+            /* 画面サイズをコンパクトに調整 */
+            width: 320px; 
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #ui-header {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            box-sizing: border-box;
+        }
+        #canvas-wrapper {
+            position: relative;
+            background-color: #fffaf0;
+            border-radius: 16px; /* 角丸を少し小さく */
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+            overflow: hidden;
+            /* Canvasサイズに合わせる */
+            width: 320px;
+            height: 480px; 
+        }
+        canvas {
+            display: block;
+        }
+        /* ゲームオーバー時のオーバーレイ */
+        #game-over {
+            display: none;
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 255, 255, 0.85);
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            border-radius: 16px;
+            z-index: 10;
+            backdrop-filter: blur(4px);
+        }
+        /* 妖精のメッセージ吹き出し */
+        #fairy-message {
+            display: none;
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            background: rgba(255, 255, 255, 0.95);
+            border: 2px solid #ffb3ba;
+            border-radius: 12px;
+            padding: 10px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            z-index: 20;
+            font-size: 14px;
+            color: #d946ef;
+            font-weight: bold;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
 
+<div id="game-container">
+    <!-- UI部分 -->
+    <div id="ui-header">
+        <div class="bg-white px-3 py-1.5 rounded-full shadow-sm text-pink-500 font-bold text-base">
+            SCORE: <span id="score">0</span>
+        </div>
+        <div class="bg-white px-3 py-1.5 rounded-full shadow-sm text-gray-600 font-bold flex items-center gap-2 text-base">
+            NEXT: <span id="next-item" class="text-xl">🍬</span>
+        </div>
+    </div>
+
+    <button onclick="askFairy()" class="mb-2 bg-yellow-100 hover:bg-yellow-200 text-yellow-700 px-4 py-1.5 rounded-full text-sm font-bold shadow border border-yellow-300 transition active:scale-95 flex items-center gap-1 w-full justify-center">
+        ✨ お菓子の妖精にアドバイスをもらう ✨
+    </button>
+
+    <!-- ゲーム画面 -->
+    <div id="canvas-wrapper">
+        <div id="fairy-message"></div>
+        <canvas id="game-canvas"></canvas>
+        
+        <!-- ゲームオーバー画面 -->
+        <div id="game-over">
+            <h2 class="text-3xl font-black text-pink-500 mb-2">GAME OVER</h2>
+            <p class="text-lg text-gray-700 mb-5 font-bold">SCORE: <span id="final-score">0</span></p>
+
+            <button id="btn-fortune" onclick="getFortune()" class="bg-yellow-300 hover:bg-yellow-400 text-yellow-800 font-bold py-2 px-6 rounded-full shadow transform transition active:scale-95 text-sm mb-4">
+                ✨ 今のスコアでスイーツ占い ✨
+            </button>
+            <p id="fortune-result" class="text-sm text-gray-700 mb-4 px-4 text-center font-medium hidden leading-relaxed max-h-32 overflow-y-auto"></p>
+
+            <button onclick="resetGame()" class="bg-pink-400 hover:bg-pink-500 text-white font-bold py-2 px-6 rounded-full shadow-lg transform transition active:scale-95 text-base">
+                もういちど遊ぶ
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- 画面サイズをコンパクトに変更 ---
+    const GAME_WIDTH = 320;
+    const GAME_HEIGHT = 480;
+    const DROP_LINE_Y = 80; // 限界線も少し上に調整
+
+    // --- お菓子の種類と設定（小さい順） ---
+    // 画面が小さくなったので、お菓子のサイズ（radius）も全体的に少し小さく調整しています
+    const SWEETS = [
+        { level: 0, emoji: '🍬', radius: 14, score: 2, color: '#ffb3ba' },  // キャンディ
+        { level: 1, emoji: '🍫', radius: 20, score: 4, color: '#ffdfba' },  // チョコ
+        { level: 2, emoji: '🍪', radius: 28, score: 8, color: '#ffffba' },  // クッキー
+        { level: 3, emoji: '🍩', radius: 38, score: 16, color: '#baffc9' }, // ドーナツ
+        { level: 4, emoji: '🧁', radius: 50, score: 32, color: '#bae1ff' }, // カップケーキ
+        { level: 5, emoji: '🍰', radius: 64, score: 64, color: '#e8baff' }, // ショートケーキ
+        { level: 6, emoji: '🍮', radius: 80, score: 128, color: '#ffbaf2' },// プリン
+        { level: 7, emoji: '🥧', radius: 98, score: 256, color: '#ffc4ba' },// タルト
+        { level: 8, emoji: '🧇', radius: 118, score: 512, color: '#e2f0cb' },// ワッフル
+        { level: 9, emoji: '🍧', radius: 140, score: 1024, color: '#ff9ce5' },// かき氷・パフェ
+        { level: 10, emoji: '🎂', radius: 165, score: 2048, color: '#ff6b6b' } // ホールケーキ（最大）
+    ];
+
+    // Matter.js のモジュール
+    const Engine = Matter.Engine,
+          Runner = Matter.Runner,
+          Bodies = Matter.Bodies,
+          Composite = Matter.Composite,
+          Events = Matter.Events;
+
+    let engine, world, runner;
+    let canvas, ctx;
+    
+    // ゲーム状態
+    let currentScore = 0;
+    let nextSweetLevel = 0;
+    let currentX = GAME_WIDTH / 2;
+    let isDropping = false;
+    let isGameOver = false;
+
+    // 初期化関数
+    function init() {
+        canvas = document.getElementById('game-canvas');
+        ctx = canvas.getContext('2d');
+        canvas.width = GAME_WIDTH;
+        canvas.height = GAME_HEIGHT;
+
+        // 物理エンジンのセットアップ
+        engine = Engine.create();
+        world = engine.world;
+        
+        // 重力の調整
+        engine.gravity.y = 0.8;
+
+        // 壁と床の作成 (見えない壁)
+        const wallOptions = { isStatic: true, render: { visible: false } };
+        // 床と壁の位置をGAME_WIDTH, GAME_HEIGHTに合わせて調整
+        const ground = Bodies.rectangle(GAME_WIDTH/2, GAME_HEIGHT + 25, GAME_WIDTH, 50, wallOptions);
+        const leftWall = Bodies.rectangle(-25, GAME_HEIGHT/2, 50, GAME_HEIGHT + 200, wallOptions);
+        const rightWall = Bodies.rectangle(GAME_WIDTH + 25, GAME_HEIGHT/2, 50, GAME_HEIGHT + 200, wallOptions);
+        
+        Composite.add(world, [ground, leftWall, rightWall]);
+
+        // 次のアイテムをランダムに決定（最初は小さいものだけ）
+        nextSweetLevel = Math.floor(Math.random() * 3);
+        updateUI();
+
+        // 衝突判定イベント
+        Events.on(engine, 'collisionStart', handleCollision);
+
+        // イベントリスナー（マウス・タッチ）
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('touchmove', handleMove, { passive: false });
+        canvas.addEventListener('mouseup', handleDrop);
+        canvas.addEventListener('touchend', handleDrop);
+
+        // レンダリングと物理演算のループ開始
+        runner = Runner.create();
+        Runner.run(runner, engine);
+        requestAnimationFrame(renderLoop);
+        
+        // ゲームオーバー判定ループ
+        setInterval(checkGameOver, 1000);
+    }
+
+    // --- 操作関連 ---
+    function handleMove(e) {
+        if (isDropping || isGameOver) return;
+        e.preventDefault(); // スクロール防止
+        
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        let clientX = e.clientX;
+        
+        if (e.type === 'touchmove') {
+            clientX = e.touches[0].clientX;
+        }
+
+        let x = (clientX - rect.left) * scaleX;
+        const currentSweet = SWEETS[nextSweetLevel];
+        
+        // 壁にめり込まないように制限
+        x = Math.max(currentSweet.radius, Math.min(GAME_WIDTH - currentSweet.radius, x));
+        currentX = x;
+    }
+
+    function handleDrop(e) {
+        if (isDropping || isGameOver) return;
+        if (e && e.type === 'touchend') {
+            e.preventDefault();
+        }
+        isDropping = true;
+
+        const sweetData = SWEETS[nextSweetLevel];
+        
+        // 物理ボディの作成
+        const body = Bodies.circle(currentX, 30, sweetData.radius, { // 出現位置を少し上に
+            restitution: 0.2, // 弾みやすさ
+            friction: 0.5,    // 摩擦
+            density: 0.001 * sweetData.radius, // 大きいほど重い
+            render: { visible: false } // 描画は自前で行うため非表示
+        });
+
+        // カスタムプロパティを追加
+        body.sweetLevel = nextSweetLevel;
+        body.isMerging = false;
+
+        Composite.add(world, body);
+
+        // 次のアイテムをセット（少し待機）
+        setTimeout(() => {
+            if(!isGameOver) {
+                // レベル0〜2の中からランダムに次のお菓子を出現させる
+                nextSweetLevel = Math.floor(Math.random() * 3);
+                updateUI();
+                isDropping = false;
+            }
+        }, 800);
+    }
+
+    // --- 衝突（マージ）処理 ---
+    function handleCollision(event) {
+        const pairs = event.pairs;
+
+        for (let i = 0; i < pairs.length; i++) {
+            const bodyA = pairs[i].bodyA;
+            const bodyB = pairs[i].bodyB;
+
+            // 両方がお菓子であり、同じレベルの場合
+            if (bodyA.sweetLevel !== undefined && bodyB.sweetLevel !== undefined) {
+                if (bodyA.sweetLevel === bodyB.sweetLevel) {
+                    
+                    // 既にマージ処理中の場合はスキップ
+                    if (bodyA.isMerging || bodyB.isMerging) continue;
+                    
+                    bodyA.isMerging = true;
+                    bodyB.isMerging = true;
+
+                    const level = bodyA.sweetLevel;
+                    
+                    if (level >= SWEETS.length - 1) continue;
+
+                    const nextLevel = level + 1;
+                    const nextSweetData = SWEETS[nextLevel];
+
+                    // 中間地点を計算
+                    const newX = (bodyA.position.x + bodyB.position.x) / 2;
+                    const newY = (bodyA.position.y + bodyB.position.y) / 2;
+
+                    // スコア加算
+                    currentScore += nextSweetData.score;
+                    updateUI();
+
+                    // Matter.jsの処理タイミングの問題を避けるため、次のフレームでワールドを更新
+                    setTimeout(() => {
+                        Composite.remove(world, [bodyA, bodyB]);
+                        
+                        const newBody = Bodies.circle(newX, newY, nextSweetData.radius, {
+                            restitution: 0.2,
+                            friction: 0.5,
+                            density: 0.001 * nextSweetData.radius,
+                            render: { visible: false }
+                        });
+                        newBody.sweetLevel = nextLevel;
+                        newBody.isMerging = false;
+                        
+                        Composite.add(world, newBody);
+                    }, 0);
+                }
+            }
+        }
+    }
+
+    // --- ゲームオーバー判定 ---
+    function checkGameOver() {
+        if (isGameOver) return;
+        
+        // ワールド内のお菓子をチェック
+        const bodies = Composite.allBodies(world);
+        for (let i = 0; i < bodies.length; i++) {
+            const body = bodies[i];
+            if (body.sweetLevel !== undefined && !body.isStatic) {
+                // 上のラインを超えていて、かつ動きがほぼ止まっている場合
+                if (body.position.y - SWEETS[body.sweetLevel].radius < DROP_LINE_Y && Math.abs(body.velocity.y) < 0.1) {
+                    gameOver();
+                    break;
+                }
+            }
+        }
+    }
+
+    function gameOver() {
+        isGameOver = true;
+        document.getElementById('game-over').style.display = 'flex';
+        document.getElementById('final-score').innerText = currentScore;
+        
+        // 占いのUIをリセット
+        document.getElementById('btn-fortune').style.display = 'block';
+        document.getElementById('btn-fortune').innerText = '✨ 今のスコアでスイーツ占い ✨';
+        document.getElementById('btn-fortune').disabled = false;
+        document.getElementById('fortune-result').classList.add('hidden');
+        document.getElementById('fortune-result').innerText = '';
+    }
+
+    // --- UIと描画 ---
+    function updateUI() {
+        document.getElementById('score').innerText = currentScore;
+        document.getElementById('next-item').innerText = SWEETS[nextSweetLevel].emoji;
+    }
+
+    function resetGame() {
+        // ワールドのクリア
+        Composite.clear(world);
+        Engine.clear(engine);
+        
+        // 状態リセット
+        currentScore = 0;
+        isGameOver = false;
+        isDropping = false;
+        document.getElementById('game-over').style.display = 'none';
+        document.getElementById('fairy-message').style.display = 'none';
+        
+        // 再初期化
+        init();
+    }
+
+    // --- Gemini API連携機能 ---
+    async function fetchGeminiText(prompt) {
+        const apiKey = ""; 
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+        const payload = {
+            contents: [{ parts: [{ text: prompt }] }],
+            systemInstruction: { parts: [{ text: "あなたは可愛くて元気な「お菓子の妖精」です。絵文字をたくさん使って、短くフレンドリーに話します。" }] }
+        };
+
+        for (let i = 0; i < 5; i++) {
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) throw new Error('API error');
+                const data = await response.json();
+                return data.candidates[0].content.parts[0].text;
+            } catch (e) {
+                if (i === 4) return "通信エラーみたい…ごめんね！💦";
+                await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
+            }
+        }
+    }
+
+    async function askFairy() {
+        if (isGameOver) return;
+        
+        const msgDiv = document.getElementById('fairy-message');
+        msgDiv.innerText = "盤面を見てるよ...✨";
+        msgDiv.style.display = 'block';
+
+        // 盤面のお菓子を集計
+        const bodies = Composite.allBodies(world);
+        const counts = {};
+        bodies.forEach(b => {
+            if(b.sweetLevel !== undefined) {
+                const name = SWEETS[b.sweetLevel].emoji;
+                counts[name] = (counts[name] || 0) + 1;
+            }
+        });
+        
+        let boardState = Object.entries(counts).map(([name, count]) => `${name}が${count}個`).join('、');
+        if (!boardState) boardState = "まだ空っぽ";
+
+        const prompt = `今、画面の中には「${boardState}」があるよ。今の状況に対して、プレイヤーに1〜2文で可愛いアドバイスや応援をして！`;
+        
+        const reply = await fetchGeminiText(prompt);
+        msgDiv.innerText = reply;
+
+        // 5秒後に消す
+        setTimeout(() => {
+            msgDiv.style.display = 'none';
+        }, 5000);
+    }
+
+    async function getFortune() {
+        const btn = document.getElementById('btn-fortune');
+        const resultDiv = document.getElementById('fortune-result');
+        
+        btn.disabled = true;
+        btn.innerText = "占い中...✨🔮";
+        resultDiv.classList.remove('hidden');
+        resultDiv.innerText = "妖精さんが運勢を読み解いています...";
+
+        const prompt = `プレイヤーがスイーツを落とすパズルゲームで「${currentScore}点」を取りました！このスコアをもとに、今日の運勢（ラッキーお菓子やラッキーアクションなど）を2〜3文で可愛く占って！`;
+
+        const reply = await fetchGeminiText(prompt);
+        resultDiv.innerText = reply;
+        btn.style.display = 'none'; // ボタンを隠す
+    }
+
+    // カスタム描画ループ
+    function renderLoop() {
+        // 背景クリア
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 落下限界線の描画
+        ctx.beginPath();
+        ctx.setLineDash([4, 4]);
+        ctx.moveTo(0, DROP_LINE_Y);
+        ctx.lineTo(GAME_WIDTH, DROP_LINE_Y);
+        ctx.strokeStyle = '#ffb3ba';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 落とす前のアイテムのプレビュー描画
+        if (!isDropping && !isGameOver) {
+            const previewSweet = SWEETS[nextSweetLevel];
+            ctx.globalAlpha = 0.5; // 半透明
+            drawSweet(currentX, 30, previewSweet.radius, previewSweet.emoji, previewSweet.color, 0);
+            ctx.globalAlpha = 1.0;
+            
+            // 縦のガイドライン
+            ctx.beginPath();
+            ctx.setLineDash([4, 6]);
+            ctx.moveTo(currentX, 30);
+            ctx.lineTo(currentX, GAME_HEIGHT);
+            ctx.strokeStyle = 'rgba(255, 179, 186, 0.4)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // 物理ボディ（お菓子）の描画
+        const bodies = Composite.allBodies(world);
+        bodies.forEach(body => {
+            if (body.sweetLevel !== undefined) {
+                const sweet = SWEETS[body.sweetLevel];
+                drawSweet(body.position.x, body.position.y, sweet.radius, sweet.emoji, sweet.color, body.angle);
+            }
+        });
+
+        requestAnimationFrame(renderLoop);
+    }
+
+    // お菓子の描画関数
+    function drawSweet(x, y, radius, emoji, color, angle) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle);
+
+        // 背景の丸
+        ctx.beginPath();
+        ctx.arc(0, 0, radius, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        ctx.lineWidth = 2; // 線を少し細く
+        ctx.stroke();
+
+        // 絵文字
+        ctx.font = `${radius * 1.2}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(emoji, 0, radius * 0.1);
+
+        ctx.restore();
+    }
+
+    // ページ読み込み時にゲーム開始
+    window.onload = init;
+
+</script>
+</body>
+</html>
